@@ -100,7 +100,7 @@ def load_models():
 
      # ADD THESE 3 LINES
     lstm_data   = joblib.load('lstm_ae_results.pkl')
-    lstm_ae = tf.keras.models.load_model('best_lstm_ae.h5')
+    lstm_ae = keras.models.load_model('best_lstm_ae.h5')
     lstm_thresh = lstm_data['threshold']
 
     return xgb, scaler, iso, nn, lstm_ae, lstm_thresh
