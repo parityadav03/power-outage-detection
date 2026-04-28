@@ -1,0 +1,5 @@
+,Type,F1,Precision,Recall,AUC,Approach
+XGBoost (Tuned + Early Stop),Supervised,0.9934810951760105,0.9870466321243523,1.0,1.0,Classification
+Neural Network (Giant Arch),Supervised,0.6609,0.49,1.0,0.9996,Classification
+Isolation Forest,Unsupervised,0.0006662225183211193,0.00038153376573826786,0.0026246719160104987,0.0,Anomaly Score
+LSTM Autoencoder,Unsupervised,0.04055032585083273,0.022275258552108195,0.22580645161290322,0.0,Reconstruction Error

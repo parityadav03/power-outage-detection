@@ -1,0 +1,21 @@
+# Large model files — too big for GitHub
+*.keras
+*.h5
+
+# Data files — too large
+tetouancity.csv
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# Environment
+.env
+venv/
+env/
+
+# OS files
+.DS_Store
+Thumbs.db
