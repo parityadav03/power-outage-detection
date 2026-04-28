@@ -12,7 +12,10 @@ warnings.filterwarnings('ignore')
 
 from sklearn.ensemble import IsolationForest
 from tensorflow import keras
+import os
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+lstm_ae = tf.keras.models.load_model(os.path.join(BASE_DIR, 'best_lstm_ae.h5'))
 # ── Page config ─────────────────────────────────────────────
 st.set_page_config(
     page_title = "Power Outage Detection System",
