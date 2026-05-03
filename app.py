@@ -540,12 +540,12 @@ with st.form("prediction_form"):
 
     with c1:
         st.markdown("**⚡ Power Readings (kW)**")
-        zone1_in = st.number_input("Zone 1", value=30000.0,
-                                    min_value=0.0, max_value=100000.0)
-        zone2_in = st.number_input("Zone 2", value=20000.0,
-                                    min_value=0.0, max_value=100000.0)
-        zone3_in = st.number_input("Zone 3", value=15000.0,
-                                    min_value=0.0, max_value=100000.0)
+        zone1_in = st.number_input("Zone 1", value=20.0,
+                                    min_value=0.0, max_value=50.0)
+        zone2_in = st.number_input("Zone 2", value=20.0,
+                                    min_value=0.0, max_value=50.0)
+        zone3_in = st.number_input("Zone 3", value=15.0,
+                                    min_value=0.0, max_value=50.0)
 
     with c2:
         st.markdown("**🌤️ Weather Conditions**")
@@ -575,28 +575,82 @@ if submitted:
     month_map = {'Jan':1,'Feb':2,'Mar':3,'Apr':4,'May':5,'Jun':6,
                  'Jul':7,'Aug':8,'Sep':9,'Oct':10,'Nov':11,'Dec':12}
 
-    # Build a feature row matching training features
-    # Use dataset means for rolling/lag features
-    means = X_hard.mean()
+    # ── Get raw statistics from original CSV ─────────────────
+    df_orig        = pd.read_csv('tetouancity.csv')
+    df_orig.columns= ['DateTime','zone1','zone2','zone3',
+                       'temp','humidity','wind_speed',
+                       'general_diffuse','diffuse']
+    raw_mean = float(df_orig['zone1'].mean())
+    raw_std  = max(float(df_orig['zone1'].std()), 1.0)
 
-    input_dict = {}
-    for col in feature_cols:
-        input_dict[col] = float(means[col])
+    # ── Compute z-score from raw input ───────────────────────
+    computed_zscore = (zone1_in - raw_mean) / raw_std
 
-    # Override with actual inputs
-    input_dict['zone1']      = zone1_in
-    input_dict['zone2']      = zone2_in
-    input_dict['zone3']      = zone3_in
-    input_dict['temp']       = temp_in
-    input_dict['humidity']   = humidity_in
-    input_dict['wind_speed'] = wind_in
-    input_dict['hour']       = hour_in
-    input_dict['dayofweek']  = day_map[day_in]
-    input_dict['month']      = month_map[month_in]
-    input_dict['is_weekend'] = 1 if day_map[day_in] >= 5 else 0
-    input_dict['is_night']   = 1 if (hour_in < 6 or hour_in >= 22) else 0
+    # ── Strategy: find the closest real outage row in dataset
+    #    and override its z-score with our computed one ────────
+    # This ensures ALL 39 features are in the correct scale
+    # because they come from actual training data
 
-    # Rebuild interaction features
+    # Find a real outage row from the dataset
+    feature_cols_list = list(X_hard.columns)
+    y_vals = pd.read_csv('features_day2.csv',
+                          index_col='DateTime',
+                          parse_dates=True)['outage']
+
+    # Use a normal row as base (index 1000 is safely normal)
+    base_row = X_hard.iloc[1000].copy()
+
+    # Override the key features with our computed values
+    # These are already in the scaled feature space
+    scaled_mean_z = float(X_hard['z1_zscore'].mean())
+    scaled_std_z  = float(X_hard['z1_zscore'].std())
+
+    # Map our raw zscore to the scaled feature space
+    # In training: outage zscores were around -2.5 to -5 raw
+    # In scaled space: look at what real outage rows show
+    outage_rows    = X_hard[y_vals == 1]
+    normal_rows    = X_hard[y_vals == 0]
+
+    mean_outage_z1zscore = float(outage_rows['z1_zscore'].mean())
+    mean_normal_z1zscore = float(normal_rows['z1_zscore'].mean())
+
+    # Interpolate: if our zscore < -2.5, use outage profile
+    #              if zscore > -0.5,  use normal profile
+    if submitted:
+                day_map   = {'Monday':0,'Tuesday':1,'Wednesday':2,'Thursday':3,
+                            'Friday':4,'Saturday':5,'Sunday':6}
+                month_map = {'Jan':1,'Feb':2,'Mar':3,'Apr':4,'May':5,'Jun':6,
+                            'Jul':7,'Aug':8,'Sep':9,'Oct':10,'Nov':11,'Dec':12}
+
+    # ── Zone1 is stored in scale 3-40 in features_day2.csv ───
+    # mean=18.81, std=5.82
+    # Outage threshold: zscore < -2.5
+    # Normal zscore: around 0
+
+    raw_mean = 18.81
+    raw_std  = 5.82
+
+    computed_zscore = (zone1_in - raw_mean) / raw_std
+
+    # ── Build feature row using dataset means as base ─────────
+    means      = X_hard.mean()
+    all_cols   = list(X_hard.columns)
+    input_dict = {col: float(means[col]) for col in all_cols}
+
+    # Override with user inputs
+    input_dict['zone1']        = zone1_in
+    input_dict['zone2']        = zone2_in
+    input_dict['zone3']        = zone3_in
+    input_dict['temp']         = temp_in
+    input_dict['humidity']     = humidity_in
+    input_dict['wind_speed']   = wind_in
+    input_dict['hour']         = hour_in
+    input_dict['dayofweek']    = day_map[day_in]
+    input_dict['month']        = month_map[month_in]
+    input_dict['is_weekend']   = 1 if day_map[day_in] >= 5 else 0
+    input_dict['is_night']     = 1 if (hour_in < 6 or hour_in >= 22) else 0
+
+    # Interaction features
     input_dict['z1_z2_ratio']   = zone1_in / (zone2_in + 1e-6)
     input_dict['z1_z3_ratio']   = zone1_in / (zone3_in + 1e-6)
     input_dict['all_zones_sum'] = zone1_in + zone2_in + zone3_in
@@ -605,19 +659,42 @@ if submitted:
     input_dict['wind_x_z1']     = wind_in * zone1_in
     input_dict['humidity_x_z1'] = humidity_in * zone1_in
 
-    # Build row in correct feature order
-    all_cols   = list(X_hard.columns)
-    input_row  = np.array([[input_dict.get(c, float(means.get(c, 0)))
-                            for c in all_cols]])
+    # Z-score features — these are the most important
+    input_dict['z1_zscore']            = computed_zscore
+    input_dict['zscore_momentum']      = computed_zscore * 0.5
+    input_dict['z1_rolling_mean_w144'] = raw_mean
+    input_dict['z1_rolling_std_w144']  = raw_std
+    input_dict['z1_rolling_mean_w12']  = zone1_in
+    input_dict['z1_rolling_std_w12']   = abs(zone1_in - raw_mean) * 0.3
+    input_dict['z1_rolling_min_w12']   = zone1_in * 0.95
+    input_dict['z1_rolling_max_w12']   = zone1_in * 1.05
+    input_dict['z1_rolling_min_w144']  = min(zone1_in, raw_mean * 0.8)
+    input_dict['z1_rolling_max_w144']  = max(zone1_in, raw_mean * 1.2)
+    input_dict['z1_rolling_mean_w288'] = raw_mean
+    input_dict['z1_rolling_std_w288']  = raw_std
+    input_dict['z1_rolling_min_w288']  = min(zone1_in, raw_mean * 0.8)
+    input_dict['z1_rolling_max_w288']  = max(zone1_in, raw_mean * 1.2)
+    input_dict['z1_diff_1']            = zone1_in - raw_mean
+    input_dict['z1_diff_6']            = zone1_in - raw_mean
+    input_dict['z1_diff_144']          = zone1_in - raw_mean
+    input_dict['z1_lag_1']             = raw_mean
+    input_dict['z1_lag_6']             = raw_mean
+    input_dict['z1_lag_144']           = raw_mean
+    input_dict['volatility_ratio']     = (
+        abs(zone1_in - raw_mean) / (raw_std + 1e-6)
+    )
+
+    # Build and scale
+    input_row    = np.array([[input_dict.get(c, float(means[c]))
+                              for c in all_cols]])
     input_scaled = scaler.transform(input_row)
 
     # Predict
-    prob = float(xgb_model.predict_proba(input_scaled)[0][1])
+    prob = float(xgb_model.predict_proba(input_scaled)[0, 1])
     pred = int(prob >= threshold)
 
     st.markdown("---")
     r1, r2, r3 = st.columns([1, 2, 1])
-
     with r2:
         if pred == 1:
             st.markdown(f"""
@@ -636,45 +713,111 @@ if submitted:
             </div>
             """, unsafe_allow_html=True)
 
-        # Probability gauge
-        fig_gauge = go.Figure(go.Indicator(
-            mode  = "gauge+number",
-            value = prob * 100,
-            title = {'text': "Outage Probability (%)"},
-            gauge = {
-                'axis'  : {'range': [0, 100]},
-                'bar'   : {'color': '#ff4b4b' if pred else '#00d4aa'},
-                'steps' : [
-                    {'range': [0,   30],  'color': '#1e3a2f'},
-                    {'range': [30,  70],  'color': '#3a2e1e'},
-                    {'range': [70, 100],  'color': '#3a1e1e'},
-                ],
-                'threshold': {
-                    'line' : {'color': 'yellow', 'width': 3},
-                    'thickness': 0.75,
-                    'value': threshold * 100
-                }
-            },
-            number = {'suffix': '%', 'font': {'size': 40}}
-        ))
-        fig_gauge.update_layout(
-            height        = 280,
-            template      = 'plotly_dark',
-            margin        = dict(l=20, r=20, t=40, b=20),
-            paper_bgcolor = 'rgba(0,0,0,0)',
-        )
-        st.plotly_chart(fig_gauge, use_container_width=True)
+    fig_gauge = go.Figure(go.Indicator(
+        mode  = "gauge+number",
+        value = prob * 100,
+        title = {'text': "Outage Probability (%)"},
+        gauge = {
+            'axis' : {'range': [0, 100]},
+            'bar'  : {'color': '#ff4b4b' if pred else '#00d4aa'},
+            'steps': [
+                {'range': [0,   30],  'color': '#1e3a2f'},
+                {'range': [30,  70],  'color': '#3a2e1e'},
+                {'range': [70, 100],  'color': '#3a1e1e'},
+            ],
+            'threshold': {
+                'line'     : {'color': 'yellow', 'width': 3},
+                'thickness': 0.75,
+                'value'    : threshold * 100
+            }
+        },
+        number = {'suffix': '%', 'font': {'size': 40}}
+    ))
+    fig_gauge.update_layout(
+        height=280, template='plotly_dark',
+        margin=dict(l=20,r=20,t=40,b=20),
+        paper_bgcolor='rgba(0,0,0,0)',
+    )
+    st.plotly_chart(fig_gauge, use_container_width=True)
 
-    # Feature contribution table
-    st.markdown("**Input Summary:**")
     summary = pd.DataFrame({
-        'Feature'  : ['Zone 1', 'Zone 2', 'Zone 3',
-                      'Temp', 'Humidity', 'Wind', 'Hour'],
-        'Value'    : [zone1_in, zone2_in, zone3_in,
-                      temp_in,  humidity_in, wind_in, hour_in],
-        'Unit'     : ['kW', 'kW', 'kW', '°C', '%', 'km/h', 'h']
+        'Feature': ['Zone 1','Zone 2','Zone 3',
+                    'Temp','Humidity','Wind','Hour'],
+        'Value'  : [zone1_in, zone2_in, zone3_in,
+                    temp_in, humidity_in, wind_in, hour_in],
+        'Unit'   : ['units','units','units','°C','%','km/h','h']
     })
     st.dataframe(summary, use_container_width=True, hide_index=True)
+
+    # Predict
+    threshold = float(threshold) if 'threshold' in locals() else 0.5
+
+    probs = xgb_model.predict_proba(input_scaled)
+    prob  = float(probs[0, 1])
+    pred  = int(prob >= threshold)
+
+    # Risk interpretation
+    if prob < 0.3:
+        risk_level = "LOW"
+    elif prob < 0.7:
+        risk_level = "MEDIUM"
+    else:
+        risk_level = "HIGH"
+
+    label = "NORMAL OPERATION" if prob < 0.3 else \
+            "⚠️ WARNING" if prob < 0.7 else \
+            "🚨 OUTAGE RISK"
+
+    st.markdown("---")
+    r1, r2, r3 = st.columns([1, 2, 1])
+
+    with r2:
+        st.markdown(f"""
+        <div class="{'normal-alert' if prob < 0.3 else 'outage-alert'}">
+            {label}<br>
+            <span style="font-size:2.5rem;">{prob*100:.1f}%</span><br>
+            <span style="font-size:0.9rem;">outage probability</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.caption(f"Risk Level: {risk_level}")
+
+    # Dynamic gauge color
+    bar_color = '#00d4aa' if prob < 0.3 else '#ffa500' if prob < 0.7 else '#ff4b4b'
+
+    fig_gauge = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=prob * 100,
+        title={'text': "Outage Probability (%)"},
+        gauge={
+            'axis': {'range': [0, 100]},
+            'bar': {'color': bar_color},
+            'steps': [
+                {'range': [0, 30], 'color': '#1e3a2f'},
+                {'range': [30, 70], 'color': '#3a2e1e'},
+                {'range': [70, 100], 'color': '#3a1e1e'},
+            ],
+            'threshold': {
+                'line': {'color': 'yellow', 'width': 3},
+                'thickness': 0.75,
+                'value': threshold * 100
+            }
+        },
+        number={'suffix': '%', 'font': {'size': 40}}
+    ))
+
+    fig_gauge.update_layout(
+        height=280,
+        template='plotly_dark',
+        margin=dict(l=20, r=20, t=40, b=20),
+        paper_bgcolor='rgba(0,0,0,0)',
+    )
+
+    st.plotly_chart(
+        fig_gauge,
+        use_container_width=True,
+        key="outage_gauge_unique"
+    )
 
 
 # ══════════════════════════════════════════════════════════════
